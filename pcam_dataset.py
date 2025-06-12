@@ -4,25 +4,22 @@ from torch.utils.data import Dataset
 
 import os
 import glob
+import h5py
 
 from PIL import Image
 
 import torch
-from torch.utils.data import DataLoader, Subset, random_split
+from torch.utils.data import DataLoader, ConcatDataset, Subset, random_split
 from torchvision.transforms.v2 import Compose, ToImage, ToDtype, Normalize, Resize
 
-class SneakersDataset(MO810Dataset):
+class PCamDataset(MO810Dataset):
     """
-    Custom PyTorch Dataset for loading a sneakers image classification dataset.
-    
-    The dataset is organized by class folders. If download=True, the dataset is
-    downloaded and unzipped from a remote Kaggle link. The dataset supports 
-    optional transformations.
+    Custom PyTorch Dataset for loading the Patch Camelyon (PCam) image classification dataset.
     """
 
     def __init__(self, data_dir, download=True, transform=None):
         """
-        Initializes the SneakersDataset.
+        Initializes the PCamDataset.
         Args:
             data_dir (str): Directory to store or load the dataset from.
             download (bool): Whether to download the dataset if not found.
@@ -31,33 +28,26 @@ class SneakersDataset(MO810Dataset):
         super().__init__()
         # Data dir
         self.data_dir = data_dir
-        self.dataset_dir = self.data_dir+"/sneakers-dataset/sneakers-dataset"
+        self.dataset_dir = self.data_dir + "/pcam"
+        self.transform = transform
 
         if download:
-            self.remote_url = "https://www.kaggle.com/api/v1/datasets/download/nikolasgegenava/sneakers-classification"
-            self.local_filename = "sneakers-dataset.zip"
+            self.remote_url = "https://www.kaggle.com/api/v1/datasets/download/andrewmvd/metastatic-tissue-classification-patchcamelyon"
+            self.local_filename = "pcam.zip"
             self.download_data()
 
-        self.transform = transform        
-        self.image_paths = []
+        sets = self.__read_hdf5([("training", "train"), ("validation", "valid"), ("test", "test")])
+        (self.train_set, self.val_set, self.test_set) = sets
+        self.full_set = ConcatDataset(sets)
         self.labels = []
-        self.classes = []
-
-        # Scan directory and assign numeric labels to classes
-        label_idx = 0
-        for label_path in glob.glob(os.path.join(self.dataset_dir, "*")):
-            # For each image in label_path
-            for img_path in glob.glob(os.path.join(label_path, "*.*")):
-                self.image_paths.append(img_path)
-                self.labels.append(label_idx)
-            label_str = label_path.split("/")[-1]
-            self.classes.append(label_str)
-            label_idx += 1
 
         # Count samples per class
-        self.nsamples = { c:0 for c in self.classes }
-        for l in self.labels:
-            self.nsamples[self.classes[l]] += 1
+        self.classes = ["healthy", "tumor"]
+        self.nsamples = { 0: 0, 1: 0 }
+        for dataset in sets:
+            for l in dataset.labels:
+                self.labels.append(l)
+                self.nsamples[l] += 1
 
     def download_data(self):
         """
@@ -70,7 +60,7 @@ class SneakersDataset(MO810Dataset):
             urllib.request.urlretrieve(self.remote_url, self.local_filename)
 
         if not os.path.exists(self.data_dir):
-            print(f"Creatint the data folder")
+            print(f"Creating the data folder")
             os.mkdir(self.data_dir)
 
         if not os.path.exists(self.dataset_dir):
@@ -86,7 +76,7 @@ class SneakersDataset(MO810Dataset):
         Returns:
             int: Total number of samples in the dataset.
         """
-        return len(self.image_paths)
+        return len(self.full_set)
     
     def convert_img(self, img, bkg_color=(255,255,255)):
         """
@@ -117,9 +107,8 @@ class SneakersDataset(MO810Dataset):
         Returns:
             tuple: (image, label), where image is a transformed tensor and label is an integer.
         """
-        img_path = self.image_paths[index]
-        label = self.labels[index]        
-        image = self.convert_img(Image.open(img_path))
+        image, label = self.full_set[index]
+        image = self.convert_img(Image.fromarray(image))
         if self.transform:
             image = self.transform(image)
         return image, label
@@ -129,7 +118,36 @@ class SneakersDataset(MO810Dataset):
         Returns:
             str: Human-readable description of the dataset.
         """
-        return f"SneakersDataset (# samples = {self.nsamples})"
+        return f"PatchCamelyon Dataset (# samples = {self.nsamples})"
+    
+    def __read_hdf5(self, split_names: list[tuple[str, str]]):
+        return [H5Dataset(self.data_dir, f"pcam/{x_name}_split", f"Labels/Labels/camelyonpatch_level_2_split_{y_name}_y") for (x_name, y_name) in split_names]
+
+class H5Dataset(Dataset):
+    def __init__(self, data_dir, data_path, labels_path, transform=None):
+        self.data_file = h5py.File(f"{data_dir}/{data_path}.h5", "r")
+        self.labels_file = h5py.File(f"{data_dir}/{labels_path}.h5", "r")
+        
+        self.data = self.data_file["x"]
+        self.labels = [l.squeeze()[()] for l in self.labels_file["y"]]
+
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        x = self.data[idx]
+        y = self.labels[idx]
+        
+        if self.transform:
+            x = self.transform(x)
+        
+        return x, y
+
+    def __del__(self):
+        self.data_file.close()
+        self.labels_file.close()
 
 class TransformedSubset(Dataset):
     """
@@ -162,10 +180,10 @@ class TransformedSubset(Dataset):
         Returns:
             tuple: (transformed_data, target), where target is the label or ground truth.
         """
-        data, target = self.subset[idx]
+        data, label = self.subset[idx]
         if self.transform:
             data = self.transform(data)
-        return data, target
+        return data, label
 
     def __len__(self):
         """
@@ -175,9 +193,9 @@ class TransformedSubset(Dataset):
         """
         return len(self.subset)
 
-class SneakersDataModule(MO810DataModule):
+class PCamDataModule(MO810DataModule):
     """
-    PyTorch Lightning DataModule for the SneakersDataset.
+    PyTorch Lightning DataModule for the PCamDataset.
     Handles data loading, splitting into train/val/test subsets,
     and setting up data loaders.
     """
@@ -189,7 +207,7 @@ class SneakersDataModule(MO810DataModule):
                  batch_size: int = 32, 
                  num_workers: int = 4):
         """
-        Initializes the SneakersDataModule.
+        Initializes the PCamDataModule.
 
         Default transform pipeline: ToImage() => reize((128,128)) => ToDtype(float32, scale=True) => Normalize())
 
@@ -219,10 +237,10 @@ class SneakersDataModule(MO810DataModule):
                                                              self.precomputed_dataset_stats["std"])])
 
         # Load full dataset with transforms
-        self.full_dataset = SneakersDataset(data_dir=self.data_dir)
+        self.full_dataset = PCamDataset(data_dir=self.data_dir)
 
         # Split into training, validation, and test subsets
-        self.train_subset, self.val_subset, self.test_subset = self.split(self.full_dataset)
+        self.train_subset, self.val_subset, self.test_subset = self.full_dataset.train_set, self.full_dataset.val_set, self.full_dataset.test_set
 
         # Set the transform pipelines
         if train_transform:
@@ -237,26 +255,6 @@ class SneakersDataModule(MO810DataModule):
             self.test_transform = test_transform
         else:
             self.test_transform = self.default_transform_pipeline
-
-    def split(self, dataset):
-        """
-        Splits the dataset into train, val, and test sets.
-
-        Args:
-            dataset (Dataset): The full dataset to split.
-
-        Returns:
-            tuple: (train_subset, val_subset, test_subset)
-        """
-        # 20% for test
-        test_size = int(0.2 * len(dataset))
-        # 64% for train (80% of non-test samples)
-        train_size = int(0.8 * (len(dataset) - test_size))
-        # 16% for validation (20% of non-test samples)
-        val_size = len(dataset) - train_size - test_size
-
-        generator = torch.Generator().manual_seed(42)
-        return random_split(dataset, [train_size, val_size, test_size], generator=generator)
 
     def sample_dataset(self, dataset, fraction=None, samples_per_class=None):
         """
