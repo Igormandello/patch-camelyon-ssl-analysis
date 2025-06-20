@@ -5,10 +5,12 @@ name = "pypi"
 
 [packages]
 pytorch = "*"
-minerva-ml = "*"
 tensorboard = "*"
 tensorboardx = "*"
 h5py = "*"
+minerva-ml = {ref = "main", git = "https://github.com/discovery-unicamp/Minerva"}
+plotly = "*"
+nbformat = "*"
 
 [dev-packages]
 ipykernel = "*"
