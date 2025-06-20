@@ -3,3 +3,4 @@ pcam.zip
 __pycache__/
 logs/**/*.yaml
 logs/**/events.out*
+logs/**/*.ckpt
