@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import csv
 
-def parse_metrics(metrics_csv_filename):
+def parse_supervised_metrics(metrics_csv_filename):
     metrics = None
     with open(metrics_csv_filename, newline='') as csvfile:
         csv_reader = csv.reader(csvfile, delimiter=',', quotechar='"')
@@ -21,25 +21,19 @@ def parse_metrics(metrics_csv_filename):
                             v.append( int(row[i]) )
     return metrics
 
-def plot_results(sorted_list, stats):
-    color_array = [ 'b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
-    N = len(sorted_list)
-    fig, ax = plt.subplots(1, N, figsize=(N*5, 3), sharey=True)
-    ax[0].set_ylabel('Accuracy')
-    for i, basename in enumerate(sorted_list):
-        ax[i].set_xlabel("Steps")
-        values = stats[basename]
-        for j, (version, metrics) in enumerate(values.items()):
-            val_stats = metrics["val_accuracy"]
-            epochs, steps, val_accs = zip(*val_stats)
-            ax[i].plot(steps, val_accs, label=f"Val: {version}", color=color_array[j])
-            if "test_accuracy" in metrics:
-                test_stats = metrics["test_accuracy"]
-                ax[i].axhline(y=test_stats[-1][2], color=color_array[j], linestyle='--', label=f"Test: {version}")
-        ax[i].set_title(f"{basename}")
-        ax[i].grid()
-        ax[i].legend()
-    plt.show()
+def parse_eval_metrics(metrics_csv_filename):
+    metrics = None
+    with open(metrics_csv_filename, newline='') as csvfile:
+        csv_reader = csv.reader(csvfile, delimiter=',', quotechar='"')
+        for row in csv_reader:
+            if not metrics:
+                metrics = { m:[] for m in row }
+            else:
+                for i, (k, v) in enumerate(metrics.items()):
+                    if row[0] != "" and row[i] != "":
+                        v.append((int(row[0]), int(row[2]), float(row[i])))
+
+    return metrics
 
 def plot_results_plotly(sorted_list, stats):
     color_array = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'gray']
